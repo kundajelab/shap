@@ -199,7 +199,7 @@ class TFDeepExplainer(Explainer):
         """ Return which inputs of this operation are variable (i.e. depend on the model inputs).
         """
         if op.name not in self._vinputs:
-            self._vinputs[op.name] = np.array([t.op in self.between_ops or t in self.model_inputs for t in op.inputs])
+            self._vinputs[op.name] = np.array([t.op in self.between_ops or t.name in [x.name for x in self.model_inputs] for t in op.inputs])
         return self._vinputs[op.name]
 
     def phi_symbolic(self, i):
