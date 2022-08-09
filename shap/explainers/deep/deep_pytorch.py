@@ -456,6 +456,7 @@ op_handler['Sigmoid'] = nonlinear_1d
 op_handler["Tanh"] = nonlinear_1d
 op_handler["Softplus"] = nonlinear_1d
 op_handler['Softmax'] = nonlinear_1d
+op_handler['Exp'] = nonlinear_1d
 
 op_handler['MaxPool1d'] = maxpool
 op_handler['MaxPool2d'] = maxpool
