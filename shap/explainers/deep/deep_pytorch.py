@@ -117,12 +117,13 @@ class PyTorchDeepExplainer(Explainer):
         Recursively for non-container layers
         """
         handles_list = []
-        for child in model.children():
-            if 'nn.modules.container' in str(type(child)):
+        model_children = list(model.children())
+        if model_children:
+            for child in model_children:
                 handles_list.extend(self.add_handles(child, forward_handle, backward_handle))
-            else:
-                handles_list.append(child.register_forward_hook(forward_handle))
-                handles_list.append(child.register_backward_hook(backward_handle))
+        else:  # leaves
+            handles_list.append(model.register_forward_hook(forward_handle))
+            handles_list.append(model.register_backward_hook(backward_handle))
         return handles_list
 
     def remove_attributes(self, model):
@@ -150,11 +151,18 @@ class PyTorchDeepExplainer(Explainer):
         selected = [val for val in outputs[:, idx]]
         if self.interim:
             interim_inputs = self.layer.target_input
-            grads = [torch.autograd.grad(selected, input, retain_graph=True)[0].cpu().numpy() for input in interim_inputs]
+            grads = [torch.autograd.grad(selected, input,
+                                         retain_graph=True if idx + 1 < len(interim_inputs) else None,
+                                         allow_unused=True)[0].cpu().numpy()
+                    for idx, input in enumerate(interim_inputs)]
+
             del self.layer.target_input
             return grads, [i.detach().cpu().numpy() for i in interim_inputs]
         else:
-            grads = [torch.autograd.grad(selected, x, retain_graph=True)[0].cpu().numpy() for x in X]
+            grads = [torch.autograd.grad(selected, x,
+                                         retain_graph=True if idx + 1 < len(X) else None,
+                                         allow_unused=True)[0].cpu().numpy()
+                    for idx, x in enumerate(X)]
             return grads
 
     def shap_values(self, X, ranked_outputs=None, output_rank_order="max",
@@ -386,15 +394,13 @@ def maxpool(module, grad_input, grad_output):
         xmax_pos, rmax_pos = torch.chunk(pool_to_unpool[module.__class__.__name__](
             grad_output[0] * diffs, indices, module.kernel_size, module.stride,
             module.padding, list(module.x.shape)), 2)
+    orig_input_shape = grad_input[0].shape
     grad_input = [None for _ in grad_input]
     grad_input[0] = torch.where(torch.abs(delta_in) < 1e-7, torch.zeros_like(delta_in),
                            (xmax_pos + rmax_pos) / delta_in).repeat(dup0)
     if module.__class__.__name__ == 'MaxPool1d':
         complex_module_gradients.append(grad_input[0])
-        grad_input[0] = torch.gather(grad_input[0], -1, indices).unsqueeze(1)
-    # delete the attributes
-    del module.x
-    del module.y
+        grad_input[0] = torch.ones(orig_input_shape)
     return tuple(grad_input)
 
 
@@ -414,9 +420,6 @@ def nonlinear_1d(module, grad_input, grad_output):
     grads[0] = torch.where(torch.abs(delta_in.repeat(dup0)) < 1e-6, grad_input[0],
                            grad_output[0] * (delta_out / delta_in).repeat(dup0))
 
-    # delete the attributes
-    del module.x
-    del module.y
     return tuple(grads)
 
 
