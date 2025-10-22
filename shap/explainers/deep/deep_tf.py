@@ -287,6 +287,10 @@ class TFDeepExplainer(Explainer):
                 else:
                     bg_data = self.data
                 # tile the inputs to line up with the reference data samples
+                #
+                # tiled_X becomes a list of tiled copies of the chosen slice X[l][j:j+1], one per l. Each
+                # array in tiled_X has the same number of samples as bg_data[l], and the same feature dimensions
+                # as X[l], but is just N times the same copy of X[l][j:j+1] where N is bg_data[l].shape[0]. 
                 tiled_X = [np.tile(X[l][j:j+1], (bg_data[l].shape[0],) + tuple([1 for k in range(len(X[l].shape)-1)])) for l in range(len(X))]
                 joint_input = [np.concatenate([tiled_X[l], bg_data[l]], 0) for l in range(len(X))]
                 # run attribution computation graph
@@ -489,10 +493,15 @@ def nonlinearity_1d_handler(input_ind, explainer, op, *grads):
     delta_in0 = xin0 - rin0
     dup0 = [2] + [1 for i in delta_in0.shape[1:]]
     out = [None for _ in op.inputs]
+    # grads[0] is the upstream gradient tensor (∂L/∂y, coming from the next layer)
     orig_grads = explainer.orig_grads[op.type](op, grads[0])
     out[input_ind] = tf.where(
         tf.tile(tf.abs(delta_in0), dup0) < 1e-6,
+        # See section 3.5.2 in the deeplift arxiv manuscript: "We can thus use the gradient instead of
+        # the multiplier when x is close to its reference to avoid numerical instability issues caused by
+        # having a small denominator."
         orig_grads[input_ind] if len(op.inputs) > 1 else orig_grads,
+        # valeh: idk why we multiply the deeplift multipliers by the upstream gradient here
         grads[0] * tf.tile((xout - rout) / delta_in0, dup0)
     )
     return out
