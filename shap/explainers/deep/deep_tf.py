@@ -313,16 +313,33 @@ class TFDeepExplainer(Explainer):
                     bg_data=bg_data)
 
                 if validate_summation_to_delta:
-                    if (self.combine_mult_and_diffref != standard):
-                        temp_phis_j = self.standard_combine_mult_and_diffref(
-                            mult=[sample_phis[l][:-bg_data[l].shape[0]]
-                                for l in range(len(X))],
-                            orig_inp=[X[l][j] for l in range(len(X))],
-                            bg_data=bg_data)
-                    else:
-                        temp_phis_j = phis_j
-                    f_ref = self.run(self.model_output, self.model_inputs, bg_data).mean()
-                    assert np.allclose(y - f_ref), temp_phis_j.sum(-1).sum(-1)
+                    # sum of input contributions
+                    temp_phis_j = standard_combine_mult_and_diffref(
+                        mult=[sample_phis[l][:-bg_data[l].shape[0]]
+                            for l in range(len(X))],
+                        orig_inp=[X[l][j] for l in range(len(X))],
+                        bg_data=bg_data,
+                        return_mean=False
+                    )
+                    # we assume for now that temp_phis_j is b x n x m where n is seq length and m is num features (ACGT)
+                    # and b is num bg samples
+                    assert len(temp_phis_j) == 1
+                    tpj = temp_phis_j[0]
+                    assert len(tpj.shape) == 3 and tpj.shape == bg_data[0].shape
+                    sum_input_contribs = tpj.sum(-1).sum(-1)
+                    
+                    # difference from reference (delta_y)
+                    y_ref = self.run(self.model_output, self.model_inputs, bg_data)
+                    if not ((len(y_ref.shape) == 2) and (y_ref.shape[1] == 1)):
+                        # note I'm assuming a single output value here (ie y_ref is n x 1 where n is num bg samples)
+                        # would need to handle the case where output shape is different
+                        raise NotImplementedError("validate_summation_to_delta only implemented for single output value models!")
+                    # one per bg reference
+                    delta_y = model_output_values[j] - y_ref.squeeze()
+
+                    # assert all close
+                    assert np.allclose(sum_input_contribs, delta_y), \
+                       "Summation-to-delta property violated: input contributions do not sum to output difference-from-reference!"
 
                 # assign the attributions to the right part of the output arrays
                 for l in range(len(X)):
