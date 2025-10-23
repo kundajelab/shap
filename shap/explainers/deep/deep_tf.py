@@ -241,7 +241,7 @@ class TFDeepExplainer(Explainer):
         return self.phi_symbolics[i]
 
     def shap_values(self, X, ranked_outputs=None, output_rank_order="max",
-                             progress_message=None):
+                             progress_message=None, validate_summation_to_delta: bool = False):
 
         # check if we have multiple inputs
         if not self.multi_input:
@@ -253,9 +253,14 @@ class TFDeepExplainer(Explainer):
             assert type(X) == list, "Expected a list of model inputs!"
         assert len(self.model_inputs) == len(X), "Number of model inputs (%d) does not match the number given (%d)!" % (len(self.model_inputs), len(X))
 
+        model_output_values = None
+        if validate_summation_to_delta:
+            model_output_values = self.run(self.model_output, self.model_inputs, X)
+
         # rank and determine the model outputs that we will explain
         if ranked_outputs is not None and self.multi_output:
-            model_output_values = self.run(self.model_output, self.model_inputs, X)
+            if model_output_values is None:
+                model_output_values = self.run(self.model_output, self.model_inputs, X)
             if output_rank_order == "max":
                 model_output_ranks = np.argsort(-model_output_values)
             elif output_rank_order == "min":
@@ -270,6 +275,7 @@ class TFDeepExplainer(Explainer):
 
         # compute the attributions
         output_phis = []
+        self.bg_data = []
         for i in range(model_output_ranks.shape[1]):
             phis = []
             for k in range(len(X)):
@@ -286,6 +292,7 @@ class TFDeepExplainer(Explainer):
                         bg_data = [bg_data]
                 else:
                     bg_data = self.data
+                self.bg_data.append(bg_data)
                 # tile the inputs to line up with the reference data samples
                 #
                 # tiled_X becomes a list of tiled copies of the chosen slice X[l][j:j+1], one per l. Each
@@ -305,11 +312,24 @@ class TFDeepExplainer(Explainer):
                     orig_inp=[X[l][j] for l in range(len(X))],
                     bg_data=bg_data)
 
+                if validate_summation_to_delta:
+                    if (self.combine_mult_and_diffref != standard):
+                        temp_phis_j = self.standard_combine_mult_and_diffref(
+                            mult=[sample_phis[l][:-bg_data[l].shape[0]]
+                                for l in range(len(X))],
+                            orig_inp=[X[l][j] for l in range(len(X))],
+                            bg_data=bg_data)
+                    else:
+                        temp_phis_j = phis_j
+                    f_ref = self.run(self.model_output, self.model_inputs, bg_data).mean()
+                    assert np.allclose(y - f_ref), temp_phis_j.sum(-1).sum(-1)
+
                 # assign the attributions to the right part of the output arrays
                 for l in range(len(X)):
                     phis[l][j] = phis_j[l] 
 
             output_phis.append(phis[0] if not self.multi_input else phis)
+            
         if not self.multi_output:
             return output_phis[0]
         elif ranked_outputs is not None:
